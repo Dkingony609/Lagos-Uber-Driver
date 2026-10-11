@@ -30,3 +30,13 @@ Financial reporting distinguishes purchased fuel from consumption. Cash reflects
 Recovery at the depot includes a paid emergency litre if inventory is below 1 L and minimum repairs to condition 20 if needed. Grants cover only the shortfall in available cash after reserved wages. Accrued wages never create a negative wallet or an invented wage grant: insufficient cash retains the unpaid accrual and requests a pause. This is a rare recovery case, visible in the fleet’s wage balances.
 
 Re-run domain and browser tests after retuning prices, timer ratios, geometry or physics. Do not use the development scenario grant to assess normal progression speed.
+
+## 3D driving additions
+
+The 3D geometry uses the same compressed X/Z coordinates as the graph’s X/Y simulation; it does not change fares, distance scale, timers or saved progress. Steering response falls at higher speed, rain reduces grip, braking/reverse needs fuel for propulsion, and contact checks use oriented 8-by-4-unit vehicle footprints. Collisions use relative contact speed while the player is moving. Traffic uses right lanes, acceleration/braking, junction reservations, 12-second alternating signals at selected junctions, and checks the player as an obstacle.
+
+Fuel purchases require a stopped car within 8 units of the pump at `(550, 245)`. A traversable apron connects it to the eastern Yaba junction at `(515, 245)`. Pricing, tank capacity, inventory valuation and fleet service rules are unchanged.
+
+Advertiser campaigns are local overlays and never charge, credit or change the economic ledger. View counts require an active campaign, a street camera (not Overview), distance under 65 units and billboard intersection with the camera frustum. Counts are approximate camera exposures, without occlusion testing or verified advertising analytics. A campaign is deduplicated during an approach; leaving beyond 100 units allows another view. A changed business/headline starts a fresh count.
+
+Auto graphics use lighter Lambert shading and adapt render resolution downward when frame cadence is slow. Software WebGL starts at reduced resolution. Low and High provide manual choices; this does not change the fixed simulation step. Performance on software rendering is documented separately from physical GPU performance.

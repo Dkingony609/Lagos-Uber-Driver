@@ -48,6 +48,8 @@ export function updateTraffic(
   dt: number,
   rain: boolean,
   rush: boolean,
+  real = 0,
+  player?: Point,
 ) {
   const claimed = new Map<number, number>();
   for (const car of cars) {
@@ -68,10 +70,26 @@ export function updateTraffic(
         (o.x - car.x) * Math.cos(h) + (o.y - car.y) * Math.sin(h) > 0 &&
         Math.cos(o.heading - h) > 0.7,
     );
+    const playerAhead =
+      player &&
+      distance(car, player) < 15 &&
+      (player.x - car.x) * Math.cos(h) + (player.y - car.y) * Math.sin(h) > 0 &&
+      Math.abs(
+        (player.x - car.x) * Math.sin(h) - (player.y - car.y) * Math.cos(h),
+      ) < 7;
+    const vertical = Math.abs(Math.sin(h)) > 0.7;
+    const red =
+      target % 3 === 1 &&
+      (Math.floor(real / 12) + target) % 2 !== (vertical ? 0 : 1);
     car.waiting =
       ahead ||
+      !!playerAhead ||
+      (red && d > 13 && d < 27) ||
       (d < 22 && claimed.has(target) && claimed.get(target) !== car.id);
-    car.speed = car.waiting ? 0 : (rain ? 6 : 10) / (rush ? 1.2 : 1);
+    const desired = car.waiting ? 0 : (rain ? 6 : 10) / (rush ? 1.2 : 1);
+    car.speed +=
+      Math.sign(desired - car.speed) *
+      Math.min(Math.abs(desired - car.speed), dt * (car.waiting ? 18 : 4));
     const step = Math.min(d, car.speed * dt);
     if (d > 0.2) {
       car.x += ((to.x - car.x) / d) * step;
@@ -90,4 +108,28 @@ export function trafficBlocks(cars: TrafficCar[], p: Point, heading: number) {
       (o.x - p.x) * Math.cos(heading) + (o.y - p.y) * Math.sin(heading) > 0 &&
       Math.cos(o.heading - heading) > 0.7,
   );
+}
+
+// Oriented vehicle footprints: adjacent lanes do not collide simply because centers are close.
+export function vehiclesOverlap(
+  a: Point & { heading: number },
+  b: Point & { heading: number },
+) {
+  const dx = b.x - a.x,
+    dy = b.y - a.y;
+  for (const axis of [
+    a.heading,
+    a.heading + Math.PI / 2,
+    b.heading,
+    b.heading + Math.PI / 2,
+  ]) {
+    const radius = (h: number) =>
+      4 * Math.abs(Math.cos(h - axis)) + 2 * Math.abs(Math.sin(h - axis));
+    if (
+      Math.abs(dx * Math.cos(axis) + dy * Math.sin(axis)) >=
+      radius(a.heading) + radius(b.heading)
+    )
+      return false;
+  }
+  return true;
 }

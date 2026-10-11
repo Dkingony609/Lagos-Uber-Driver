@@ -3,10 +3,12 @@ import {
   createTraffic,
   updateTraffic,
   trafficBlocks,
+  vehiclesOverlap,
   type TrafficCar,
 } from "./traffic";
 import {
   nodes,
+  fuelPump,
   endpoints,
   services,
   distance,
@@ -456,8 +458,7 @@ export function purchaseFuel(s: State, litres: number, fleet = false) {
   if (
     fleet
       ? s.fleet!.trip !== null
-      : distance(car, nodes[services.fuel]) > 12 ||
-        speedKmh(car.speed) >= C.stopSpeedKmh
+      : distance(car, fuelPump) > 8 || speedKmh(car.speed) >= C.stopSpeedKmh
   )
     return false;
   litres = Math.min(litres, C.tank - car.fuel);
@@ -665,6 +666,8 @@ export function tick(s: State, input: Input, dt = C.tick) {
     dt,
     s.rain,
     s.clock < 36000 || (s.clock >= 57600 && s.clock < 68400),
+    s.real,
+    s.owner,
   );
   const v = s.owner,
     d = s.driver,
@@ -681,7 +684,10 @@ export function tick(s: State, input: Input, dt = C.tick) {
   if (input.brake) {
     v.speed *= Math.pow(0.03, dt);
   } else if (input.down) {
-    v.speed = Math.max(-7, v.speed - 12 * dt);
+    v.speed = Math.max(
+      v.fuel > 0 && v.condition > 0 ? -7 : 0,
+      v.speed - 12 * dt,
+    );
   } else if (input.up && v.fuel > 0 && v.condition > 0) {
     v.speed = Math.min(C.maxSpeed, v.speed + 7 * dt);
   } else v.speed *= Math.pow(0.65, dt);
@@ -689,12 +695,13 @@ export function tick(s: State, input: Input, dt = C.tick) {
   if (Math.abs(v.speed) < 0.04) v.speed = 0;
   const steering = (input.right ? 1 : 0) - (input.left ? 1 : 0);
   v.heading +=
-    steering *
-    2 *
-    dt *
-    Math.min(1, Math.abs(v.speed) / 6) *
-    Math.sign(v.speed) *
-    (s.rain ? C.rainGrip : 1);
+    (steering *
+      2 *
+      dt *
+      Math.min(1, Math.abs(v.speed) / 6) *
+      Math.sign(v.speed) *
+      (s.rain ? C.rainGrip : 1)) /
+    (1 + Math.abs(v.speed) / 18);
   let moved = 0;
   for (let i = 0; i < 4; i++) {
     const next = {
@@ -712,8 +719,12 @@ export function tick(s: State, input: Input, dt = C.tick) {
     }
   }
   for (const traffic of s.traffic) {
-    if (distance(v, traffic) < 7 && Math.abs(v.speed) > 4) {
-      collision(s, Math.abs(v.speed));
+    const impact = Math.hypot(
+      v.speed * Math.cos(v.heading) - traffic.speed * Math.cos(traffic.heading),
+      v.speed * Math.sin(v.heading) - traffic.speed * Math.sin(traffic.heading),
+    );
+    if (Math.abs(v.speed) > 4 && vehiclesOverlap(v, traffic) && impact > 4) {
+      collision(s, impact);
       v.speed *= 0.3;
       break;
     }

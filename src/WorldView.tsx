@@ -1,302 +1,456 @@
-import { useEffect, useRef } from "react";
-import Phaser from "phaser";
-import { nodes, services } from "./world";
+import { useEffect, useRef, useState } from "react";
+import * as T from "three";
+import { nodes, fuelPump } from "./world";
 import { C } from "./config";
 import { tick, type State, type Input } from "./simulation";
+import {
+  cameras,
+  adSlots,
+  persistExperience,
+  type Experience,
+} from "./experience";
+import { buildCity, car, person, updateBoards, disposeScene } from "./city3d";
 export function WorldView({
   state,
+  experience,
   onChange,
   onInteract,
   onPause,
 }: {
   state: { current: State };
+  experience: { current: Experience };
   onChange: () => void;
   onInteract: () => void;
   onPause: () => void;
 }) {
-  const keyState = useRef<Input>({}),
-    host = useRef<HTMLDivElement>(null),
+  const host = useRef<HTMLDivElement>(null),
+    keys = useRef<Input>({}),
     callbacks = useRef({ onChange, onInteract, onPause });
+  const [error, setError] = useState("");
   callbacks.current = { onChange, onInteract, onPause };
   useEffect(() => {
-    const keys = keyState.current;
-    const handler = (e: KeyboardEvent, down: boolean) => {
-      let key = e.key.toLowerCase();
+    const el = host.current!;
+    let renderer: T.WebGLRenderer;
+    try {
+      renderer = new T.WebGLRenderer({
+        antialias: true,
+        powerPreference: "high-performance",
+      });
+    } catch {
+      setError(
+        "This 3D view needs WebGL. Enable hardware acceleration in your browser and reload.",
+      );
+      return;
+    }
+    const gl = renderer.getContext(),
+      debug = gl.getExtension("WEBGL_debug_renderer_info");
+    const software =
+      debug &&
+      /swiftshader|llvmpipe|software/i.test(
+        String(gl.getParameter(debug.UNMASKED_RENDERER_WEBGL)),
+      );
+    const sharpRatio = Math.min(window.devicePixelRatio, 1.5);
+    let quality = experience.current.quality,
+      ratio =
+        quality === "Low"
+          ? 0.55
+          : quality === "High"
+            ? sharpRatio
+            : software
+              ? 0.6
+              : sharpRatio;
+    let qualitySeconds = 0,
+      qualityFrames = 0;
+    renderer.setPixelRatio(ratio);
+    renderer.setClearColor("#c6d5d2");
+    renderer.outputColorSpace = T.SRGBColorSpace;
+    renderer.domElement.setAttribute("aria-label", "3D Lagos driving view");
+    el.appendChild(renderer.domElement);
+    const scene = new T.Scene();
+    scene.fog = new T.Fog("#c6d5d2", 90, 300);
+    scene.add(new T.HemisphereLight("#dce9ff", "#655b3e", 2.3));
+    const sun = new T.DirectionalLight("#fff0d1", 2.2);
+    sun.position.set(-120, 170, 80);
+    scene.add(sun);
+    const camera = new T.PerspectiveCamera(62, 1, 0.1, 1000),
+      boards = buildCity(scene, experience.current);
+    const owner = car("#a4dbcb", true),
+      fleet = car("#b59ade", true),
+      traffic = state.current.traffic.map((c) =>
+        car(c.color, false, c.id % 3 === 0),
+      );
+    scene.add(owner.g, fleet.g, ...traffic.map((c) => c.g));
+    const pickup = person("#d98355");
+    pickup.name = "waiting-passenger";
+    scene.add(pickup);
+    const pin = new T.Mesh(
+      new T.ConeGeometry(1.8, 3.5, 12),
+      new T.MeshBasicMaterial({ color: "#e6bb68" }),
+    );
+    pin.rotation.z = Math.PI;
+    scene.add(pin);
+    const routeLine = new T.Line(
+      new T.BufferGeometry(),
+      new T.LineBasicMaterial({ color: "#80fad4" }),
+    );
+    scene.add(routeLine);
+    const signals = nodes
+      .filter((n) => n.id % 3 === 1)
+      .map((n) => {
+        const g = new T.Group(),
+          pole = new T.Mesh(
+            new T.BoxGeometry(0.3, 5, 0.3),
+            new T.MeshStandardMaterial({ color: "#4b5652" }),
+          );
+        pole.position.y = 2.5;
+        g.add(pole);
+        const light = new T.Mesh(
+          new T.SphereGeometry(0.35, 8, 6),
+          new T.MeshBasicMaterial({ color: "#67b969" }),
+        );
+        light.position.set(0, 4.8, 0);
+        g.add(light);
+        g.position.set(n.x + 13, 0, n.y - 13);
+        scene.add(g);
+        return { n, light };
+      });
+    const rainDrops = new T.InstancedMesh(
+      new T.BoxGeometry(0.025, 1.4, 0.025),
+      new T.MeshBasicMaterial({
+        color: "#d5e9ee",
+        transparent: true,
+        opacity: 0.45,
+      }),
+      160,
+    );
+    scene.add(rainDrops);
+    const rainMatrix = new T.Matrix4();
+    let stopped = false,
+      raf = 0,
+      last = performance.now(),
+      accumulator = 0,
+      uiTimer = 0,
+      adTimer = 0,
+      routeKey = "",
+      boardKey = "",
+      yaw = state.current.owner.heading;
+    const seen = new Set<string>();
+    const resize = new ResizeObserver(() => {
+      const w = el.clientWidth,
+        h = el.clientHeight;
+      if (w && h) {
+        renderer.setSize(w, h);
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+      }
+    });
+    resize.observe(el);
+    const clearKeys = () => {
+      for (const k of Object.keys(keys.current))
+        keys.current[k as keyof Input] = false;
+    };
+    const keyboard = (e: KeyboardEvent, down: boolean) => {
+      const key = e.key.toLowerCase();
       if (down && !e.repeat && key === "escape") {
         e.preventDefault();
         callbacks.current.onPause();
+        clearKeys();
         return;
       }
-      const active = document.activeElement;
-      if (active && ["INPUT", "SELECT", "TEXTAREA"].includes(active.tagName))
+      if (
+        down &&
+        ["INPUT", "SELECT", "TEXTAREA"].includes(
+          (document.activeElement as HTMLElement)?.tagName,
+        ) &&
+        key !== "escape"
+      )
         return;
       if (
         ["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(key)
       )
         e.preventDefault();
-      if (key === "w" || key === "arrowup") keys.up = down;
-      if (key === "s" || key === "arrowdown") keys.down = down;
-      if (key === "a" || key === "arrowleft") keys.left = down;
-      if (key === "d" || key === "arrowright") keys.right = down;
-      if (key === " ") keys.brake = down;
+      if (["w", "arrowup"].includes(key)) keys.current.up = down;
+      if (["s", "arrowdown"].includes(key)) keys.current.down = down;
+      if (["a", "arrowleft"].includes(key)) keys.current.left = down;
+      if (["d", "arrowright"].includes(key)) keys.current.right = down;
+      if (key === " ") keys.current.brake = down;
       if (down && !e.repeat && key === "e") callbacks.current.onInteract();
+      if (down && !e.repeat && key === "c") {
+        const e = experience.current;
+        e.camera = cameras[(cameras.indexOf(e.camera) + 1) % cameras.length];
+        e.orbit = 0;
+        persistExperience(e);
+        callbacks.current.onChange();
+      }
+      if (down && !e.repeat && key === "h" && !state.current.paused)
+        window.dispatchEvent(new Event("lagos-horn"));
     };
-    const kd = (e: KeyboardEvent) => handler(e, true),
-      ku = (e: KeyboardEvent) => handler(e, false),
-      blur = () => {
-        Object.keys(keys).forEach((k) => (keys[k as keyof Input] = false));
-      };
+    const kd = (e: KeyboardEvent) => keyboard(e, true),
+      ku = (e: KeyboardEvent) => keyboard(e, false);
     window.addEventListener("keydown", kd);
     window.addEventListener("keyup", ku);
-    window.addEventListener("blur", blur);
+    window.addEventListener("blur", clearKeys);
+    let pointer: { x: number; y: number } | null = null;
+    const pd = (e: PointerEvent) => {
+      pointer = { x: e.clientX, y: e.clientY };
+      renderer.domElement.setPointerCapture(e.pointerId);
+    };
+    const pm = (e: PointerEvent) => {
+      if (!pointer) return;
+      const ex = experience.current;
+      ex.orbit += (e.clientX - pointer.x) * 0.009;
+      ex.tilt = T.MathUtils.clamp(
+        ex.tilt + (e.clientY - pointer.y) * 0.005,
+        0.05,
+        1.2,
+      );
+      pointer = { x: e.clientX, y: e.clientY };
+    };
+    const pu = () => {
+      pointer = null;
+      persistExperience(experience.current);
+    };
+    const wheel = (event: WheelEvent) => {
+      event.preventDefault();
+      experience.current.zoom = T.MathUtils.clamp(
+        experience.current.zoom + event.deltaY * 0.025,
+        12,
+        60,
+      );
+      persistExperience(experience.current);
+    };
+    const canvas = renderer.domElement;
+    canvas.addEventListener("pointerdown", pd);
+    canvas.addEventListener("pointermove", pm);
+    canvas.addEventListener("pointerup", pu);
+    canvas.addEventListener("pointercancel", pu);
+    canvas.addEventListener("wheel", wheel, { passive: false });
+    const place = (
+      mesh: ReturnType<typeof car>,
+      v: State["owner"] | State["traffic"][number],
+      dt: number,
+      braking: boolean,
+    ) => {
+      mesh.g.position.set(v.x, 0, v.y);
+      mesh.g.rotation.y = Math.PI / 2 - v.heading;
+      mesh.wheels.forEach((w) => {
+        w.rotation.x += (v.speed * dt) / 0.72;
+      });
+      mesh.brake.color.set(braking ? "#ff3520" : "#762b20");
+    };
+    function frame(now: number) {
+      if (stopped) return;
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      accumulator += dt;
+      while (accumulator >= C.tick) {
+        tick(state.current, keys.current);
+        accumulator -= C.tick;
+      }
+      qualitySeconds += dt;
+      qualityFrames++;
+      if (quality !== experience.current.quality) {
+        quality = experience.current.quality;
+        ratio =
+          quality === "Low"
+            ? 0.55
+            : quality === "High"
+              ? sharpRatio
+              : software
+                ? 0.6
+                : sharpRatio;
+        renderer.setPixelRatio(ratio);
+        qualitySeconds = 0;
+        qualityFrames = 0;
+      }
+      if (quality === "Auto" && qualitySeconds >= 2) {
+        if (qualitySeconds / qualityFrames > 0.038 && ratio > 0.45) {
+          ratio = Math.max(0.45, ratio - 0.1);
+          renderer.setPixelRatio(ratio);
+        }
+        qualitySeconds = 0;
+        qualityFrames = 0;
+      }
+      const s = state.current,
+        e = experience.current,
+        v = s.owner;
+      if (s.paused) clearKeys();
+      place(
+        owner,
+        v,
+        s.paused ? 0 : dt,
+        !s.paused && (!!keys.current.brake || !!keys.current.down),
+      );
+      fleet.g.visible = !!s.fleet;
+      if (s.fleet)
+        place(fleet, s.fleet.car, s.paused ? 0 : dt, s.fleet.car.speed === 0);
+      traffic.forEach((mesh, i) =>
+        place(mesh, s.traffic[i], s.paused ? 0 : dt, s.traffic[i].waiting),
+      );
+      owner.driver!.children.slice(0, 2).forEach((head) => {
+        head.visible = e.camera !== "Cockpit";
+      });
+      owner.passenger!.visible =
+        s.trip?.state === "onboard" || s.trip?.state === "boarding";
+      fleet.passenger!.visible = s.fleet?.trip?.state === "onboard";
+      owner.driver!.rotation.z =
+        (keys.current.right ? 1 : keys.current.left ? -1 : 0) *
+        Math.min(0.08, Math.abs(v.speed) * 0.008);
+      owner.wheel!.rotation.z =
+        -(keys.current.right ? 1 : keys.current.left ? -1 : 0) * 0.55;
+      // The cockpit is inside the actual car, beside the animated steering wheel.
+      const headingDelta = Math.atan2(
+        Math.sin(v.heading - yaw),
+        Math.cos(v.heading - yaw),
+      );
+      yaw += headingDelta * Math.min(1, dt * 6);
+      const forward = new T.Vector3(
+        Math.cos(v.heading),
+        0,
+        Math.sin(v.heading),
+      );
+      if (e.camera === "Cockpit") {
+        camera.position.set(
+          v.x + Math.sin(v.heading) * 0.85 + forward.x * 0.55,
+          2.97,
+          v.y - Math.cos(v.heading) * 0.85 + forward.z * 0.55,
+        );
+        const look = v.heading + e.orbit;
+        camera.lookAt(
+          v.x + Math.cos(look) * 30,
+          2.75 + (e.tilt - 0.35) * 8,
+          v.y + Math.sin(look) * 30,
+        );
+        camera.fov = T.MathUtils.clamp(90 - e.zoom * 0.6, 54, 83);
+      } else if (e.camera === "Overview") {
+        camera.position.set(290, 620, 291);
+        camera.lookAt(290, 0, 290);
+        camera.fov = 52;
+      } else {
+        const angle = (e.camera === "Chase" ? yaw : v.heading) + e.orbit;
+        camera.position.set(
+          v.x - Math.cos(angle) * e.zoom,
+          e.zoom * Math.sin(e.tilt) + 4,
+          v.y - Math.sin(angle) * e.zoom,
+        );
+        camera.lookAt(v.x + forward.x * 4, 2, v.y + forward.z * 4);
+        camera.fov = 62;
+      }
+      camera.updateProjectionMatrix();
+      (scene.fog as T.Fog).near = e.camera === "Overview" ? 450 : 90;
+      (scene.fog as T.Fog).far = e.camera === "Overview" ? 950 : 300;
+      const target = s.trip
+        ? nodes[s.trip.state === "onboard" ? s.trip.destination : s.trip.pickup]
+        : s.owner.fuel < 5
+          ? fuelPump
+          : null;
+      pin.visible = !!target;
+      pickup.visible =
+        !!s.trip &&
+        ["pickup", "at-pickup"].includes(s.trip.state) &&
+        !s.trip.noShow;
+      if (target) {
+        pin.position.set(target.x, 7 + Math.sin(s.real * 3), target.y);
+        pickup.position.set(target.x + 5, 0, target.y + 5);
+      }
+      const rk = s.trip?.route.join(",") ?? (s.owner.fuel < 5 ? "fuel" : "");
+      if (rk !== routeKey) {
+        routeKey = rk;
+        const points = s.trip
+          ? s.trip.route.map((i) => new T.Vector3(nodes[i].x, 0.35, nodes[i].y))
+          : s.owner.fuel < 5
+            ? [
+                new T.Vector3(515, 0.35, 245),
+                new T.Vector3(fuelPump.x, 0.35, fuelPump.y),
+              ]
+            : [];
+        routeLine.geometry.dispose();
+        routeLine.geometry = new T.BufferGeometry().setFromPoints(points);
+      }
+      const bk = JSON.stringify(e.ads);
+      if (bk !== boardKey) {
+        boardKey = bk;
+        updateBoards(boards, e);
+      }
+      adTimer += dt;
+      if (adTimer >= 1 && !s.paused) {
+        adTimer = 0;
+        const direction = new T.Vector3();
+        camera.getWorldDirection(direction);
+        const frustum = new T.Frustum().setFromProjectionMatrix(
+          new T.Matrix4().multiplyMatrices(
+            camera.projectionMatrix,
+            camera.matrixWorldInverse,
+          ),
+        );
+        for (let i = 0; i < adSlots.length; i++) {
+          const slot = adSlots[i],
+            ad = e.ads[slot.id],
+            dist = Math.hypot(v.x - slot.x, v.y - slot.y),
+            token = `${s.day}:${s.trip?.id ?? "free"}:${slot.id}:${ad.brand}:${ad.headline}`;
+          if (dist > 100) seen.delete(token);
+          if (
+            ad.active &&
+            e.camera !== "Overview" &&
+            dist < 65 &&
+            frustum.intersectsObject(boards[i]) &&
+            !seen.has(token)
+          ) {
+            seen.add(token);
+            ad.impressions++;
+            persistExperience(e);
+          }
+        }
+      }
+      signals.forEach(({ n, light }) =>
+        (light.material as T.MeshBasicMaterial).color.set(
+          (Math.floor(s.real / 12) + n.id) % 2 ? "#e4573e" : "#78be65",
+        ),
+      );
+      renderer.setClearColor(s.rain ? "#9caeae" : "#c6d5d2");
+      (scene.fog as T.Fog).color.set(s.rain ? "#9caeae" : "#c6d5d2");
+      rainDrops.visible = s.rain && e.camera !== "Overview";
+      if (rainDrops.visible) {
+        for (let i = 0; i < 160; i++) {
+          rainMatrix.makeTranslation(
+            v.x + ((i * 17) % 61) - 30,
+            (((i * 3 - s.real * 25) % 28) + 28) % 28,
+            v.y + ((i * 23) % 61) - 30,
+          );
+          rainDrops.setMatrixAt(i, rainMatrix);
+        }
+        rainDrops.instanceMatrix.needsUpdate = true;
+      }
+      renderer.render(scene, camera);
+      uiTimer += dt;
+      if (uiTimer > 0.1) {
+        uiTimer = 0;
+        callbacks.current.onChange();
+      }
+      raf = requestAnimationFrame(frame);
+    }
+    raf = requestAnimationFrame(frame);
     return () => {
+      stopped = true;
+      cancelAnimationFrame(raf);
+      resize.disconnect();
       window.removeEventListener("keydown", kd);
       window.removeEventListener("keyup", ku);
-      window.removeEventListener("blur", blur);
+      window.removeEventListener("blur", clearKeys);
+      canvas.removeEventListener("pointerdown", pd);
+      canvas.removeEventListener("pointermove", pm);
+      canvas.removeEventListener("pointerup", pu);
+      canvas.removeEventListener("pointercancel", pu);
+      canvas.removeEventListener("wheel", wheel);
+      disposeScene(scene);
+      renderer.dispose();
+      renderer.forceContextLoss();
+      canvas.remove();
     };
   }, []);
-  useEffect(() => {
-    let accumulator = 0,
-      lastPaint = 0;
-    const keys = keyState.current;
-    let previousOwner = { ...state.current.owner },
-      previousFleet = state.current.fleet
-        ? { ...state.current.fleet.car }
-        : null;
-    class World extends Phaser.Scene {
-      g!: Phaser.GameObjects.Graphics;
-      labels: Phaser.GameObjects.Text[] = [];
-      create() {
-        this.g = this.add.graphics();
-        this.drawCity();
-        this.g.generateTexture("lagos-city", 590, 600);
-        this.add.image(0, 0, "lagos-city").setOrigin(0).setDepth(-1);
-        this.g.clear();
-        const text = (
-          x: number,
-          y: number,
-          t: string,
-          size = 10,
-          color = "#8ca89d",
-        ) =>
-          this.add
-            .text(x, y, t, {
-              fontFamily: "Arial, sans-serif",
-              fontSize: size,
-              color,
-              fontStyle: "bold",
-            })
-            .setOrigin(0.5);
-        text(293, 27, "IKEJA", 14);
-        text(293, 244, "YABA", 14);
-        text(293, 552, "SURULERE", 14);
-        text(66, 547, "DEPOT", 8, "#e5bf6a");
-        text(516, 252, "FUEL", 8, "#e5bf6a");
-        text(516, 39, "REPAIR", 8, "#e5bf6a");
-        text(
-          291,
-          583,
-          "COMPRESSED FICTIONAL LAYOUT • NOT A NAVIGATION MAP",
-          7,
-          "#6c8a80",
-        );
-      }
-      update(_time: number, delta: number) {
-        const s = state.current;
-        accumulator += Math.min(delta / 1000, 0.1);
-        while (accumulator >= C.tick) {
-          previousOwner = { ...s.owner };
-          previousFleet = s.fleet ? { ...s.fleet.car } : null;
-          tick(s, keys);
-          accumulator -= C.tick;
-        }
-        if (s.real - lastPaint > 0.1) {
-          callbacks.current.onChange();
-          lastPaint = s.real;
-        }
-        this.paint(s, accumulator / C.tick);
-      }
-      drawCity() {
-        const g = this.g;
-        g.fillStyle(0x182e28);
-        g.fillRoundedRect(10, 10, 570, 570, 18);
-        // Original geometric city blocks: shade, courtyards, shop roofs, roadside trees.
-        for (let y = 0; y < 5; y++)
-          for (let x = 0; x < 5; x++) {
-            const bx = 65 + x * 90 + 17,
-              by = 65 + y * 90 + 17;
-            g.fillStyle((x + y) % 3 === 0 ? 0x234236 : 0x203b32);
-            g.fillRoundedRect(bx, by, 56, 56, 6);
-            for (let k = 0; k < 4; k++) {
-              const xx = bx + 5 + (k % 2) * 26,
-                yy = by + 6 + Math.floor(k / 2) * 26;
-              g.fillStyle(
-                [0x62735e, 0x756956, 0x566d65, 0x5a675c][(x + y + k) % 4],
-              );
-              g.fillRect(xx, yy, 20, 17);
-              g.fillStyle(0xffffff, 0.08);
-              g.fillRect(xx + 2, yy + 2, 16, 2);
-            }
-            g.fillStyle(0x356c4a);
-            g.fillCircle(bx + 53, by + 9, 5);
-            g.fillCircle(bx + 4, by + 50, 4);
-          }
-        g.lineStyle(30, 0x101f22);
-        for (let i = 0; i < 6; i++) {
-          g.lineBetween(50, 65 + i * 90, 530, 65 + i * 90);
-          g.lineBetween(65 + i * 90, 50, 65 + i * 90, 530);
-        }
-        g.lineStyle(25, 0x344347);
-        for (let i = 0; i < 6; i++) {
-          g.lineBetween(50, 65 + i * 90, 530, 65 + i * 90);
-          g.lineBetween(65 + i * 90, 50, 65 + i * 90, 530);
-        }
-        g.lineStyle(1, 0xc2b899, 0.35);
-        for (let i = 0; i < 6; i++)
-          for (let j = 51; j < 530; j += 18) {
-            if (Math.abs((((j - 65) % 90) + 90) % 90) > 16) {
-              g.lineBetween(j, 65 + i * 90, j + 7, 65 + i * 90);
-              g.lineBetween(65 + i * 90, j, 65 + i * 90, j + 7);
-            }
-          }
-        for (const n of nodes) {
-          g.fillStyle(0x344347);
-          g.fillRect(n.x - 12, n.y - 12, 24, 24);
-          g.fillStyle(0xd6d4b3, 0.35);
-          for (let z = 0; z < 4; z++)
-            g.fillRect(n.x - 9 + z * 5, n.y - 18, 2, 5);
-        }
-        for (const [name, id] of Object.entries(services)) {
-          const n = nodes[id];
-          g.fillStyle(name === "depot" ? 0xe1b76b : 0x98c9ac);
-          g.fillRoundedRect(n.x - 10, n.y - 10, 20, 20, 4);
-          g.lineStyle(2, 0x172b29);
-          g.strokeRoundedRect(n.x - 6, n.y - 6, 12, 12, 2);
-        }
-      }
-      paint(s: State, alpha: number) {
-        const mix = (a: number, b: number) => a + (b - a) * alpha;
-        const owner = {
-          ...s.owner,
-          x: mix(previousOwner.x, s.owner.x),
-          y: mix(previousOwner.y, s.owner.y),
-          heading: mix(previousOwner.heading, s.owner.heading),
-        };
-        const fleetCar =
-          s.fleet && previousFleet
-            ? {
-                ...s.fleet.car,
-                x: mix(previousFleet.x, s.fleet.car.x),
-                y: mix(previousFleet.y, s.fleet.car.y),
-              }
-            : s.fleet?.car;
-        const g = this.g;
-        g.clear();
-        const t = s.trip;
-        if (t && !t.settled) {
-          g.lineStyle(4, 0x82e3c5, 0.65);
-          const target = t.state === "onboard" ? t.destination : t.pickup;
-          const points = [owner, ...t.route.map((id) => nodes[id])];
-          g.beginPath();
-          g.moveTo(points[0].x, points[0].y);
-          points.slice(1).forEach((p) => g.lineTo(p.x, p.y));
-          g.strokePath();
-          const n = nodes[target];
-          g.lineStyle(2, 0xa5ffdc);
-          g.strokeCircle(n.x, n.y, 12 + Math.sin(s.real * 3) * 2);
-          g.fillStyle(0xa5ffdc);
-          g.fillCircle(n.x, n.y, 4);
-        }
-        if (s.offer) {
-          const n = nodes[s.offer.pickup];
-          g.lineStyle(2, 0xe7c275);
-          g.strokeCircle(n.x, n.y, 11);
-        }
-        for (const car of s.traffic) {
-          this.car(car.x, car.y, car.heading, car.color, 6, 11);
-          if (car.waiting) {
-            g.fillStyle(0xf59a6d);
-            g.fillCircle(
-              car.x - Math.cos(car.heading) * 5,
-              car.y - Math.sin(car.heading) * 5,
-              1.5,
-            );
-          }
-        }
-        if (fleetCar)
-          this.car(fleetCar.x, fleetCar.y, fleetCar.heading, 0xa18be1, 7, 13);
-        this.car(s.owner.x, s.owner.y, s.owner.heading, 0xb2f5d0, 8, 14);
-        g.lineStyle(1, 0xa5ffdc, 0.45);
-        g.strokeCircle(owner.x, owner.y, 12);
-        if (s.rain) {
-          g.lineStyle(1, 0xb0d8ec, 0.25);
-          for (let i = 0; i < 70; i++) {
-            const x = (i * 71 + s.real * 33) % 580,
-              y = (i * 113 + s.real * 160) % 580;
-            g.lineBetween(x, y, x - 3, y + 8);
-          }
-        }
-      }
-      car(
-        x: number,
-        y: number,
-        h: number,
-        color: number,
-        w: number,
-        l: number,
-      ) {
-        const g = this.g;
-        const pts = [
-          [-l / 2, -w / 2],
-          [l / 2, -w / 2],
-          [l / 2, w / 2],
-          [-l / 2, w / 2],
-        ].map(
-          ([a, b]) =>
-            new Phaser.Geom.Point(
-              x + a * Math.cos(h) - b * Math.sin(h),
-              y + a * Math.sin(h) + b * Math.cos(h),
-            ),
-        );
-        g.fillStyle(0x071413, 0.5);
-        g.fillCircle(x + 2, y + 2, l / 2);
-        g.fillStyle(color);
-        g.fillPoints(pts, true);
-        g.lineStyle(2, 0x203c3b);
-        g.lineBetween(
-          x + Math.cos(h) * 2 - (Math.sin(h) * w) / 3,
-          y + Math.sin(h) * 2 + (Math.cos(h) * w) / 3,
-          x + Math.cos(h) * 2 + (Math.sin(h) * w) / 3,
-          y + Math.sin(h) * 2 - (Math.cos(h) * w) / 3,
-        );
-        g.fillStyle(0xffefad);
-        g.fillCircle(x + (Math.cos(h) * l) / 2, y + (Math.sin(h) * l) / 2, 1.2);
-      }
-    }
-    const targetFPS =
-      import.meta.env.DEV &&
-      new URLSearchParams(location.search).get("fps") === "30"
-        ? 30
-        : 60;
-    const game = new Phaser.Game({
-      fps: { target: targetFPS, forceSetTimeOut: targetFPS === 30 },
-      type: Phaser.AUTO,
-      parent: host.current!,
-      width: 590,
-      height: 600,
-      backgroundColor: "#142723",
-      scene: World,
-      scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
-      render: { antialias: true },
-      audio: { noAudio: true },
-    });
-    return () => game.destroy(true);
-  }, [state]);
   return (
-    <div
-      className="world-canvas"
-      ref={host}
-      aria-label="Playable fictional Lagos driving world"
-    />
+    <div className="world-canvas" ref={host}>
+      {error && <p role="alert">{error}</p>}
+    </div>
   );
 }

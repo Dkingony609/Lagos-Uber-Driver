@@ -11,6 +11,7 @@ export const nodes = Array.from({ length: 36 }, (_, id) => ({
         : "Surulere",
 }));
 export const services = { depot: 30, fuel: 17, repair: 5 };
+export const fuelPump = { x: 550, y: 245 };
 export const endpoints = nodes.filter((n) => ![30, 17, 5].includes(n.id));
 export const distance = (a: Point, b: Point) =>
   Math.hypot(a.x - b.x, a.y - b.y);
@@ -50,10 +51,11 @@ export function route(a: number, b: number, traffic = 1, rain = false) {
 export const pathLength = (path: number[]) => Math.max(0, path.length - 1) * 90;
 export function road(p: Point) {
   return (
-    p.x >= 49 &&
-    p.x <= 531 &&
-    p.y >= 49 &&
-    p.y <= 531 &&
-    nodes.some((n) => Math.abs(p.x - n.x) <= 12 || Math.abs(p.y - n.y) <= 12)
+    (p.x >= 515 && p.x <= 577 && p.y >= 224 && p.y <= 270) ||
+    (p.x >= 49 &&
+      p.x <= 531 &&
+      p.y >= 49 &&
+      p.y <= 531 &&
+      nodes.some((n) => Math.abs(p.x - n.x) <= 12 || Math.abs(p.y - n.y) <= 12))
   );
 }

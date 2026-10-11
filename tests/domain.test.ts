@@ -1,3 +1,8 @@
+import {
+  vehiclesOverlap,
+  updateTraffic,
+  type TrafficCar,
+} from "../src/traffic";
 import { describe, it, expect } from "vitest";
 import {
   initial,
@@ -23,7 +28,7 @@ import {
   nextShift,
 } from "../src/simulation";
 import { validate, save, load, KEY, BACKUP } from "../src/persistence";
-import { nodes, route, pathLength, road } from "../src/world";
+import { fuelPump, nodes, route, pathLength, road } from "../src/world";
 const ticks = (s: ReturnType<typeof initial>, seconds: number) => {
   for (let i = 0; i < seconds * 60; i++) tick(s, {});
 };
@@ -56,7 +61,7 @@ describe("quotes and accounting", () => {
   });
   it("weights inventory costs and rejects unaffordable purchases atomically", () => {
     const s = initial();
-    Object.assign(s.owner, nodes[17], { fuel: 10, basis: 800 });
+    Object.assign(s.owner, fuelPump, { fuel: 10, basis: 800 });
     expect(purchaseFuel(s, 10)).toBe(true);
     expect(s.owner.basis).toBe(875);
     consume(s.owner, 10, 0);
@@ -328,4 +333,54 @@ describe("shift boundaries and service rules", () => {
     expect(s.wallet).toBe(25000);
     expect(s.history).toHaveLength(0);
   });
+});
+
+// Fuel service now requires entering the forecourt, rather than stopping on the junction.
+it("requires the drive-in fuel pump and cannot power reverse on an empty tank", () => {
+  const s = initial();
+  Object.assign(s.owner, nodes[17]);
+  expect(purchaseFuel(s, 5)).toBe(false);
+  Object.assign(s.owner, fuelPump);
+  s.owner.speed = 2;
+  expect(purchaseFuel(s, 5)).toBe(false);
+  s.owner.speed = 0;
+  expect(purchaseFuel(s, 5)).toBe(true);
+  s.owner.fuel = 0;
+  tick(s, { down: true }, 1);
+  expect(s.owner.speed).toBe(0);
+});
+
+it("queues traffic at signals and behind the player, and distinguishes adjacent-lane footprints", () => {
+  const car: TrafficCar = {
+    id: 0,
+    x: 137,
+    y: 71,
+    heading: 0,
+    index: 0,
+    loop: [1, 2],
+    speed: 0,
+    waiting: false,
+    color: 0,
+  };
+  updateTraffic([car], 1, false, false, 12);
+  expect(car.waiting).toBe(true);
+  expect(car.x).toBe(137);
+  updateTraffic([car], 1, false, false, 24);
+  expect(car.waiting).toBe(false);
+  expect(car.x).toBeGreaterThan(137);
+  const obstacle = { x: car.x + 10, y: car.y };
+  updateTraffic([car], 1, false, false, 24, obstacle);
+  expect(car.waiting).toBe(true);
+  expect(
+    vehiclesOverlap(
+      { x: 100, y: 100, heading: 0 },
+      { x: 100, y: 106, heading: 0 },
+    ),
+  ).toBe(false);
+  expect(
+    vehiclesOverlap(
+      { x: 100, y: 100, heading: 0 },
+      { x: 105, y: 100, heading: Math.PI / 2 },
+    ),
+  ).toBe(true);
 });

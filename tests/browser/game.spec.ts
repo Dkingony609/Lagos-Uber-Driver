@@ -93,7 +93,7 @@ test("drive a complete trip using keyboard controls, without teleporting", async
   page,
 }) => {
   test.setTimeout(60000);
-  await page.goto("/?fps=30");
+  await page.goto("/");
   await page.evaluate(() => window.__game!.scenario("drive"));
   await page.getByRole("button", { name: "Accept trip" }).click();
   await page.evaluate(() => {

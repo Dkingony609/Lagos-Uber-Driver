@@ -4,7 +4,7 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: { phaser: ["phaser"], react: ["react", "react-dom"] },
+        manualChunks: { three: ["three"], react: ["react", "react-dom"] },
       },
     },
   },

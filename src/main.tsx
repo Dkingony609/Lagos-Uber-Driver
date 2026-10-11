@@ -1,8 +1,14 @@
 import React, { useEffect, useReducer, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import {
+  ExperienceControls,
+  StreetAds,
+  DrivingMiniMap,
+} from "./ExperienceControls";
+import { useExperience } from "./experience";
 import { WorldView } from "./WorldView";
 import { C, money, speedKmh } from "./config";
-import { nodes, services, distance, route } from "./world";
+import { nodes, services, fuelPump, distance, route } from "./world";
 import {
   initial,
   accept,
@@ -52,12 +58,12 @@ function App() {
     [quantity, setQuantity] = useState(10),
     [saveError, setSaveError] = useState(""),
     [confirm, setConfirm] = useState<string | null>(null);
+  const experience = useExperience();
   const s = state.current,
     t = s.trip,
     q = s.offer?.quote;
   const engine = useRef<{ osc: OscillatorNode; gain: GainNode } | null>(null),
-    audio = useRef<AudioContext | null>(null),
-    musicTimer = useRef<number | undefined>(undefined);
+    audio = useRef<AudioContext | null>(null);
   const persist = () => {
     if (panel === "corrupt") return;
     try {
@@ -118,7 +124,7 @@ function App() {
         s.notice = "Stop the car before interacting.";
         return;
       }
-      if (distance(v, nodes[services.fuel]) < 12) setPanel("fuel");
+      if (distance(v, fuelPump) < 8) setPanel("fuel");
       else if (distance(v, nodes[services.repair]) < 12) setPanel("repair");
       else if (distance(v, nodes[services.depot]) < 12) setPanel("depot");
       else
@@ -177,37 +183,11 @@ function App() {
     }
   }, [s.ledger.length, s.history.length]);
   useEffect(() => {
-    clearInterval(musicTimer.current);
-    if (s.music > 0 && !s.paused) {
-      let beat = 0;
-      musicTimer.current = window.setInterval(() => {
-        if (!audio.current) return;
-        const o = audio.current.createOscillator(),
-          g = audio.current.createGain();
-        o.type = "triangle";
-        o.frequency.value = [130.81, 164.81, 196, 164.81][beat++ % 4];
-        g.gain.setValueAtTime(
-          state.current.music * 0.025,
-          audio.current.currentTime,
-        );
-        g.gain.exponentialRampToValueAtTime(
-          0.001,
-          audio.current.currentTime + 0.35,
-        );
-        o.connect(g);
-        g.connect(audio.current.destination);
-        o.start();
-        o.stop(audio.current.currentTime + 0.35);
-      }, 450);
-    }
-    return () => clearInterval(musicTimer.current);
-  }, [s.music, s.paused]);
-  useEffect(() => {
     if (!import.meta.env.DEV) return;
     window.__game = {
       get: () => state.current,
       at: (id) => {
-        const n = nodes[id];
+        const n = id === services.fuel ? fuelPump : nodes[id];
         state.current.owner.x = n.x;
         state.current.owner.y = n.y;
         state.current.owner.speed = 0;
@@ -352,6 +332,7 @@ function App() {
           <span className="live-dot" /> FICTIONAL CITY. REAL DECISIONS.
         </div>
         <nav>
+          <button onClick={() => setPanel("ads")}>Street ads</button>
           <button onClick={() => setPanel("ledger")}>
             <Arrow /> Business
           </button>
@@ -436,6 +417,7 @@ function App() {
           <div className="map-frame">
             <WorldView
               state={state}
+              experience={experience}
               onChange={render}
               onInteract={interaction}
               onPause={pause}
@@ -457,10 +439,7 @@ function App() {
               <strong>{Math.round(speedKmh(s.owner.speed))}</strong>
               <span>KM/H</span>
             </div>
-            <div className="map-help">
-              N ^<br />
-              <span>100 world units = 1 km</span>
-            </div>
+            <DrivingMiniMap s={s} />
           </div>
           <div className="controls">
             <span>
@@ -479,6 +458,14 @@ function App() {
               <kbd>ESC</kbd> Pause
             </span>
           </div>
+          <ExperienceControls
+            state={state}
+            experience={experience}
+            update={() => {
+              persist();
+              render();
+            }}
+          />
         </section>
         <aside>
           <div className="dispatch-heading">
@@ -777,7 +764,15 @@ function App() {
             <span className="eyebrow">
               LAGOS DRIVER / {panel?.toUpperCase() || "SHIFT COMPLETE"}
             </span>
-            {panel === "pause" ? (
+            {panel === "ads" ? (
+              <StreetAds
+                experience={experience}
+                update={() => {
+                  persist();
+                  render();
+                }}
+              />
+            ) : panel === "pause" ? (
               <>
                 <h2>Take a breather.</h2>
                 <p>

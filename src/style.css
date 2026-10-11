@@ -1158,3 +1158,159 @@ input[type="range"] {
     padding-bottom: 14px;
   }
 }
+.world-canvas {
+  max-width: none;
+  touch-action: none;
+}
+.driving-minimap {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  width: 130px;
+  height: 130px;
+  border: 1px solid #809a83;
+  border-radius: 6px;
+  pointer-events: none;
+  box-shadow: 0 5px 20px #0005;
+}
+.in-car {
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #192c27;
+  padding: 14px;
+  margin-bottom: 16px;
+}
+.camera-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.camera-row > span {
+  font-size: 9px;
+  letter-spacing: 1px;
+  margin-right: 8px;
+  color: var(--muted);
+}
+.camera-row button,
+.conversation button {
+  font-size: 11px;
+  padding: 7px 10px;
+}
+.camera-row button[aria-pressed="true"] {
+  background: var(--mint);
+  color: #17382c;
+}
+.camera-tip {
+  font-size: 10px;
+  margin: 10px 0;
+  color: #a7b8a8;
+}
+.car-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+.in-car label {
+  display: block;
+  font-size: 11px;
+  margin: 8px 0;
+}
+.in-car select,
+.in-car input {
+  padding: 7px;
+  margin-top: 5px;
+}
+.in-car input[type="range"] {
+  padding: 0;
+}
+.conversation {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.dialogue {
+  border-left: 3px solid var(--gold);
+  background: #253c30;
+  padding: 12px;
+  margin-top: 12px;
+}
+.dialogue b {
+  font-size: 10px;
+  color: var(--gold);
+}
+.dialogue p {
+  color: #f2efde;
+  font-size: 14px;
+  margin-top: 6px;
+}
+.dialogue small {
+  color: #bacbbb;
+  margin-top: 4px;
+}
+.recording-controls {
+  padding: 14px 0;
+  border-top: 1px solid var(--line);
+}
+.recording-controls p,
+.media-status,
+.fuel-guidance {
+  font-size: 11px;
+}
+.fuel-guidance {
+  color: var(--gold);
+  padding-top: 10px;
+}
+.ad-preview {
+  border: 2px solid #abc0ae;
+  border-radius: 3px;
+  padding: 24px;
+  text-align: center;
+  color: white;
+}
+.ad-preview strong {
+  display: block;
+  font-size: 27px;
+  margin: 14px 0;
+}
+.ad-preview small {
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+input[type="color"] {
+  height: 42px;
+  padding: 3px;
+}
+@media (max-width: 550px) {
+  .car-grid {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  nav button {
+    font-size: 10px;
+    padding: 6px;
+  }
+  .driving-minimap {
+    width: 100px;
+    height: 100px;
+  }
+  .map-chips {
+    font-size: 6px;
+    gap: 8px;
+  }
+}
+.in-car .quality-select {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+  font-size: 10px;
+  margin: 8px 0 0;
+}
+.quality-select select {
+  width: 80px;
+  font-size: 10px;
+  padding: 3px;
+  margin: 0;
+}
