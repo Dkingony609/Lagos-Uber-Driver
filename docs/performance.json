@@ -1,0 +1,33 @@
+{
+  "browser": "154.0.8037.57",
+  "environment": "Headless Chromium, Linux x86_64 cloud container; browser frame cadence with the playable production world and 25 traffic vehicles",
+  "measurements": [
+    {
+      "meanFPS": 59.930081571498064,
+      "durationMs": 3003.5000000000928,
+      "p95FrameMs": 16.799999999999272,
+      "viewport": [
+        1366,
+        768
+      ],
+      "pageHeight": 768,
+      "developmentHooks": false,
+      "trafficVehicles": 25,
+      "logicalCores": 5
+    },
+    {
+      "meanFPS": 60.11890922376673,
+      "durationMs": 3010.7000000000917,
+      "p95FrameMs": 16.799999999999272,
+      "viewport": [
+        1920,
+        1080
+      ],
+      "pageHeight": 1081,
+      "developmentHooks": false,
+      "trafficVehicles": 25,
+      "logicalCores": 5
+    }
+  ],
+  "errors": []
+}
